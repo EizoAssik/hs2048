@@ -1,4 +1,4 @@
-module Main where
+module Hs2048 where
 
 import Data.List
 import System.Random (randomRIO)
@@ -14,7 +14,7 @@ parseAct ('a':_) = LEFT
 parseAct ('d':_) = RIGHT
 parseAct  _  = NOP
 
-testmtx = [[2,0,2,0], [2,0,2,0], [0,2,0,2], [2,0,2,0]]
+emptyGame = Game 0 $ replicate 4 $ replicate 4 0
 
 rot (a:b:c:d:[]) = zipWith4 (\ a b c d -> [a, b, c, d]) a b c d
 
@@ -69,20 +69,18 @@ dump game =
         scoreline = concat ["Score: ", show $ score game]
         mtxlines  = map (unwords . map show) $ matrix game
 
-echo = fmap putStrLn dump
+echo game = (putStr . dump $ game) >> return game
 
-evo act (Game s mtx) =
+evo (Game s mtx) act =
     let (nmtx, ds) = move act mtx 
     in  Game (s + ds) nmtx
 
 getAct = fmap parseAct getLine
 
-game = Game { score = 0, matrix = testmtx }
-
 mainloop game@(Game s mtx) = do
     unless (isTerminaled mtx) $ do
-        act <- getAct
-        ng  <- randAdd 2 $ evo act game
-        echo ng >> mainloop ng
+        getAct >>= randAdd 2 . evo game
+               >>= echo
+               >>= mainloop
 
-main = echo game >> mainloop game
+main = randAdd 2 emptyGame >>= randAdd 2 >>= echo >>= mainloop 
