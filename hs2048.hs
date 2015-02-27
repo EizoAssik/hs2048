@@ -3,42 +3,57 @@ module Hs2048 where
 import Data.List
 import System.Random (randomRIO)
 import Control.Monad (when, unless)
+import Control.Applicative
 
 data Action = UP | DOWN | LEFT | RIGHT | NOP deriving (Show, Eq)
 
-data Game = Game { score :: Int, matrix :: [[Int]] } deriving (Show)
+type Score = Int
 
+type Line = [Int]
+
+type Matrix = [Line]
+
+type Game = (Score, Matrix)
+
+parseAct :: String -> Action
 parseAct ('w':_) = UP
 parseAct ('s':_) = DOWN
 parseAct ('a':_) = LEFT
 parseAct ('d':_) = RIGHT
 parseAct  _  = NOP
 
-emptyGame = Game 0 $ replicate 4 $ replicate 4 0
+emptyGame = (0, replicate 4 $ replicate 4 0) :: Game
 
+rot :: Matrix -> Matrix
 rot (a:b:c:d:[]) = zipWith4 (\ a b c d -> [a, b, c, d]) a b c d
 
-isTerminaledLine xs = (not $ elem 0 xs) && ((==4) $ length $ nub xs)
-isTerminaledX = all isTerminaledLine
-isTerminaledY = isTerminaledX . rot
-isTerminaled mtx = isTerminaledX mtx || isTerminaledY mtx
+isTerminaled :: Matrix -> Bool
+isTerminaled = (||) <$> isTerminaledX <*> isTerminaledY
+  where
+    isTerminaledLine xs = (not $ elem 0 xs) && ((==4) $ length $ nub xs)
+    isTerminaledX = all isTerminaledLine
+    isTerminaledY = isTerminaledX . rot
 
+listHole :: Matrix -> [Int]
 listHole = findIndices (==0) . concat
 
+setCell :: Matrix -> Int -> Int -> Matrix
 setCell mtx index value =
-    reform $ take index cells ++ [value] ++ drop (index + 1) cells
-    where
-        cells = concat mtx
-        reform [] = [] 
-        reform xs = (take 4 xs) : (reform $ drop 4 xs)
+  reform $ take index cells ++ [value] ++ drop (index + 1) cells
+  where
+    cells = concat mtx
+    reform [] = [] 
+    reform xs = (take 4 xs) : (reform $ drop 4 xs)
 
-randAdd v game@(Game s mtx) = do
-    let holes = listHole mtx
-    index <- randomRIO (0, length holes - 1)
-    return $ if null holes
-                then game
-                else (Game s (setCell mtx (holes !! index) v))
+randAdd :: Int -> Game -> IO Game
+randAdd v game@(s, mtx) = do
+  let holes = listHole mtx
+  if null holes
+     then return game
+     else do index <- randomRIO (0, length holes - 1)
+             return (s, setCell mtx (holes !! index) v)
 
+moveLine :: Action -> Line -> (Line, Int)
 moveLine UP    xs = moveLine LEFT  xs
 moveLine DOWN  xs = moveLine RIGHT xs
 moveLine RIGHT xs =
@@ -55,32 +70,43 @@ moveLeft  xs@(a:b:c:d:[])
     | c == d = ([a, b, c + d, 0], c + d)
     | otherwise = (xs, 0)
 
-foldmtx xs = (map fst xs, sum $ map snd xs)
-foldmtxrot xs = let (n, s) = foldmtx xs in (rot n, s)
+foldMatrix :: [(Line, Score)] -> Game
+foldMatrix = (,) <$> (sum . map snd) <*> (map fst)
 
-move NOP   = \x -> (x, 0)
-move UP    = foldmtxrot . map (moveLine LEFT)  . rot
-move DOWN  = foldmtxrot . map (moveLine RIGHT) . rot
-move act   = foldmtx . map (moveLine act)
+foldMatrixRot :: [(Line, Score)]  -> Game
+foldMatrixRot = ((,) <$> fst <*> rot . snd) `fmap` foldMatrix 
 
-dump game =
-     unlines $ scoreline:mtxlines
-     where
-        scoreline = concat ["Score: ", show $ score game]
-        mtxlines  = map (unwords . map show) $ matrix game
+move :: Game -> Action -> Game
+move game act = game `addScore` move' act game
+  where
+    move' NOP   = id
+    move' UP    = foldMatrixRot . map (moveLine LEFT)  . rot . snd
+    move' DOWN  = foldMatrixRot . map (moveLine RIGHT) . rot . snd
+    move' act   = foldMatrix . map (moveLine act) . snd
+    addScore (s, _) (ds, mtx) = (s + ds, mtx)
 
+dump :: Game -> String
+dump (score, mtx) =
+  unlines $ ("Score :" ++ show score) : mtxlines
+  where mtxlines = map (unwords . map show) mtx
+
+echo :: Game -> IO Game
 echo game = (putStr . dump $ game) >> return game
 
-evo (Game s mtx) act =
-    let (nmtx, ds) = move act mtx 
-    in  Game (s + ds) nmtx
-
+getAct :: IO Action
 getAct = fmap parseAct getLine
 
-mainloop game@(Game s mtx) = do
-    unless (isTerminaled mtx) $ do
-        getAct >>= randAdd 2 . evo game
-               >>= echo
-               >>= mainloop
+mainloop :: Game -> IO ()
+mainloop game@(s, mtx) = do
+  unless (isTerminaled mtx) $ do
+    getAct >>= randAdd 2 . move game
+           >>= echo
+           >>= mainloop
 
-main = randAdd 2 emptyGame >>= randAdd 2 >>= echo >>= mainloop 
+main :: IO ()
+main =
+  randAdd 2 emptyGame
+    >>= randAdd 2
+    >>= echo
+    >>= mainloop 
+
